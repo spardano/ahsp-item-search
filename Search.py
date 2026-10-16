@@ -38,3 +38,41 @@ class SearchUnit:
         s_kata = cosine_similarity(self._vec_kata.transform([q]), self._X_kata)[0]
         s_char = cosine_similarity(self._vec_char.transform([q]), self._X_char)[0]
         return BOBOT_KATA * s_kata + (1 - BOBOT_KATA) * s_char, q
+
+    def cari(self, query: str, k: int = 5) -> dict:
+        skor, q = self.skor(query)
+        if skor is None:
+            return {"query_ternormalisasi": q, "ada_hasil_yakin": False, "hasil": []}
+        top = skor.argsort()[::-1][:k]
+        hasil = []
+        for i in top:
+            r = self.items.iloc[i]
+            hasil.append({
+                "id": r["id"], "uraian": r["uraian"], "satuan": r["satuan"],
+                "divisi": r["divisi"], "kategori": r["kategori"],
+                "subkategori": r["subkategori"], "tipe": r["tipe"],
+                "skor": round(float(skor[i]), 3),
+            })
+
+        return {"query_ternormalisasi": q, "ada_hasil_yakin": bool(hasil and hasil[0]["skor"] >= SKOR_MIN),
+                "hasil": hasil}
+
+
+    def detail(self, item_id: str) -> dict | None:
+        n = self._pos_id.get(item_id)
+        if n is None:
+            return None
+        r = self.items.iloc[n]
+        g = self._index_komponen.get(item_id)
+        
+        komponen = [] if g is None else [
+            {"urutan": int(c.urutan), "jenis": c.jenis, "kode_komponen": c.kode_komponen,
+             "nama_komponen": c.nama_komponen, "satuan": c.satuan,
+             "koefisien": float(c.koefisien), "perlu_cek": bool(int(c.perlu_cek))}
+            for c in g.itertuples()
+        ]
+
+        return {"id": r["id"], "uraian": r["uraian"], "satuan": r["satuan"],
+                "divisi": r["divisi"], "kategori": r["kategori"], "subkategori": r["subkategori"],
+                "tipe": r["tipe"], "sumber": r["sumber"], "ref_permen": r["ref_permen"],
+                "komponen": komponen}
