@@ -66,6 +66,28 @@ def test_search_query_hanya_simbol(client):
     assert j["hasil"] == [] and j["ada_hasil_yakin"] is False
 
 
+# ---- /ahsp-items -----------------------------------------------------------
+def test_ahsp_items_pagination(client):
+    r = client.get("/ahsp-items?page=1&page_size=20")
+    assert r.status_code == 200
+    j = r.json()
+    assert j["total"] == 2596
+    assert j["page"] == 1
+    assert j["page_size"] == 20
+    assert j["total_pages"] == 130
+    assert len(j["items"]) == 20
+    assert j["items"][0]["id"] == "1.1.1.1"
+
+
+def test_ahsp_items_filter(client):
+    r = client.get("/ahsp-items?divisi=PERSIAPAN&page_size=5")
+    assert r.status_code == 200
+    j = r.json()
+    assert j["total"] > 0
+    assert len(j["items"]) == 5
+    assert all("PERSIAPAN" in it["divisi"].upper() for it in j["items"])
+
+
 # ---- /items ----------------------------------------------------------------
 def test_detail_item(client):
     r = client.get("/items/3.7.3")
@@ -75,6 +97,13 @@ def test_detail_item(client):
     jenis = {k["jenis"] for k in j["komponen"]}
     assert {"tenaga_kerja", "bahan"} <= jenis
     assert all(isinstance(k["koefisien"], float) for k in j["komponen"])
+    # verifikasi field harga
+    first = j["komponen"][0]
+    assert "harga_satuan" in first
+    assert "jumlah_harga" in first
+    assert "status_pencocokan" in first
+    assert "nama_shs_cocok" in first
+    assert isinstance(first["harga_satuan"], float)
 
 
 def test_detail_item_id_dengan_tanda_pagar(client):

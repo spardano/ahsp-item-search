@@ -16,8 +16,24 @@ class SearchUnit:
     def __init__(self, folder_data: str | Path = "."):
         folder = Path(folder_data)
         self.items = pd.read_csv(folder / "ahsp_items.csv", dtype=str).fillna("")
-        self.komponen = pd.read_csv(folder / "ahsp_components.csv", dtype={"item_id": str}).fillna("")
-        self.index_komponen = {k: g for k, g in self.komponen.groupby("item_id", sort=False)}
+        file_prices = folder / "ahsp_components_with_prices.csv"
+        file_comp = folder / "ahsp_components.csv"
+        if file_prices.exists():
+            df_comp = pd.read_csv(file_prices, dtype=str).fillna("")
+            if file_comp.exists():
+                df_old = pd.read_csv(file_comp, dtype=str).fillna("")
+                if "perlu_cek" in df_old.columns:
+                    df_comp = df_comp.merge(
+                        df_old[["item_id", "urutan", "perlu_cek"]],
+                        on=["item_id", "urutan"],
+                        how="left"
+                    ).fillna("")
+        else:
+            df_comp = pd.read_csv(file_comp, dtype=str).fillna("")
+
+        self.komponen = df_comp
+        self._index_komponen = {k: g for k, g in self.komponen.groupby("item_id", sort=False)}
+        self.index_komponen = self._index_komponen
 
         #teks yang dicari: uraian + kategori (kategori untuk membedakan item mirip)
         teks = (self.items["uraian"] + " " + self.items["kategori"]).map(normalize)
@@ -65,14 +81,97 @@ class SearchUnit:
         r = self.items.iloc[n]
         g = self._index_komponen.get(item_id)
         
-        komponen = [] if g is None else [
-            {"urutan": int(c.urutan), "jenis": c.jenis, "kode_komponen": c.kode_komponen,
-             "nama_komponen": c.nama_komponen, "satuan": c.satuan,
-             "koefisien": float(c.koefisien), "perlu_cek": bool(int(c.perlu_cek))}
-            for c in g.itertuples()
-        ]
+        komponen = []
+        if g is not None:
+            satuan_col = "satuan_komponen" if "satuan_komponen" in g.columns else "satuan"
+            has_prices = "harga_satuan" in g.columns
+            for c in g.itertuples():
+                status_pencocokan = getattr(c, "status_pencocokan", "") or None
+                perlu_cek_raw = getattr(c, "perlu_cek", "")
+                is_perlu_cek = (perlu_cek_raw in ["1", "true", "True", 1, True]) or (status_pencocokan == "Unmatched")
+
+                harga_satuan = None
+                jumlah_harga = None
+                nama_shs_cocok = None
+                if has_prices:
+                    nama_shs = getattr(c, "nama_shs_cocok", "")
+                    nama_shs_cocok = str(nama_shs) if nama_shs else None
+
+                    hs = getattr(c, "harga_satuan", "")
+                    if hs != "" and not pd.isna(hs):
+                        try:
+                            harga_satuan = float(hs)
+                        except (ValueError, TypeError):
+                            harga_satuan = None
+
+                    jh = getattr(c, "jumlah_harga", "")
+                    if jh != "" and not pd.isna(jh):
+                        try:
+                            jumlah_harga = float(jh)
+                        except (ValueError, TypeError):
+                            jumlah_harga = None
+
+                satuan = getattr(c, satuan_col, "")
+
+                komponen.append({
+                    "urutan": int(c.urutan),
+                    "jenis": c.jenis,
+                    "kode_komponen": c.kode_komponen,
+                    "nama_komponen": c.nama_komponen,
+                    "satuan": satuan,
+                    "koefisien": float(c.koefisien),
+                    "perlu_cek": is_perlu_cek,
+                    "nama_shs_cocok": nama_shs_cocok,
+                    "harga_satuan": harga_satuan,
+                    "jumlah_harga": jumlah_harga,
+                    "status_pencocokan": status_pencocokan,
+                })
 
         return {"id": r["id"], "uraian": r["uraian"], "satuan": r["satuan"],
                 "divisi": r["divisi"], "kategori": r["kategori"], "subkategori": r["subkategori"],
                 "tipe": r["tipe"], "sumber": r["sumber"], "ref_permen": r["ref_permen"],
                 "komponen": komponen}
+
+    def list_items(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        divisi: str | None = None,
+        kategori: str | None = None,
+    ) -> dict:
+        df = self.items
+        if isinstance(divisi, str) and divisi.strip():
+            df = df[df["divisi"].str.contains(divisi.strip(), case=False, na=False)]
+        if isinstance(kategori, str) and kategori.strip():
+            df = df[df["kategori"].str.contains(kategori.strip(), case=False, na=False)]
+
+        total = len(df)
+        total_pages = max(1, (total + page_size - 1) // page_size) if total > 0 else 0
+
+        start = (page - 1) * page_size
+        end = start + page_size
+        sliced = df.iloc[start:end]
+
+        items = [
+            {
+                "id": r.id,
+                "uraian": r.uraian,
+                "satuan": r.satuan,
+                "divisi": r.divisi,
+                "kategori": r.kategori,
+                "subkategori": getattr(r, "subkategori", ""),
+                "tipe": getattr(r, "tipe", ""),
+                "sumber": getattr(r, "sumber", "") or None,
+                "ref_permen": getattr(r, "ref_permen", "") or None,
+                "jumlah_komponen": int(r.jumlah_komponen) if getattr(r, "jumlah_komponen", "") and str(r.jumlah_komponen).isdigit() else None,
+            }
+            for r in sliced.itertuples()
+        ]
+
+        return {
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "items": items,
+        }

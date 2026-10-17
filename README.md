@@ -17,8 +17,9 @@ Dataset bersumber dari **Surat Edaran Dirjen Bina Konstruksi No. 182/SE/Dk/2025 
 - [Menjalankan Aplikasi](#-menjalankan-aplikasi)
 - [Dokumentasi Endpoint API](#-dokumentasi-endpoint-api)
   - [1. Health Check (`GET /health`)](#1-health-check-get-health)
-  - [2. Cari Item AHSP (`GET /search`)](#2-cari-item-ahsp-get-search)
-  - [3. Detail Item & Komponen (`GET /items/{item_id}`)](#3-detail-item--komponen-get-itemsitem_id)
+  - [2. Daftar Item AHSP dengan Pagination (`GET /ahsp-items`)](#2-daftar-item-ahsp-dengan-pagination-get-ahsp-items)
+  - [3. Cari Item AHSP (`GET /search`)](#3-cari-item-ahsp-get-search)
+  - [4. Detail Item & Komponen (`GET /items/{item_id}`)](#4-detail-item--komponen-get-itemsitem_id)
 - [Pengujian (Testing)](#-pengujian-testing)
 - [Lisensi & Referensi](#-lisensi--referensi)
 
@@ -46,7 +47,8 @@ search-unit-pricing/
 ├── Search.py               # Mesin pencari SearchUnit (TF-IDF vectorizer & cosine similarity)
 ├── Normalisasi.py          # Logika normalisasi teks, regex rasio/ukuran, & kamus sinonim
 ├── ahsp_items.csv          # Master data 2.596 item pekerjaan AHSP Cipta Karya
-├── ahsp_components.csv     # Data rincian komponen pengali (tenaga, bahan, alat, koefisien)
+├── ahsp_components_with_prices.csv # Data rincian komponen dilengkapi harga satuan & pencocokan SHS
+├── ahsp_components.csv     # Data rincian komponen pengali (fallback)
 ├── test_api.py             # Test suite (pytest) untuk normalisasi dan API endpoint
 ├── requirements.txt        # Dependensi proyek
 └── README.md               # Dokumentasi proyek
@@ -146,7 +148,61 @@ Memeriksa status layanan dan memastikan data AHSP telah termuat di memori.
 
 ---
 
-### 2. Cari Item AHSP (`GET /search`)
+### 2. Daftar Item AHSP dengan Pagination (`GET /ahsp-items`)
+Mengambil seluruh daftar master item pekerjaan AHSP dengan dukungan pagination dan filter opsional.
+
+- **Parameter Query**:
+  | Parameter | Tipe | Wajib | Default | Batasan | Keterangan |
+  | :--- | :--- | :---: | :---: | :---: | :--- |
+  | `page` | `integer` | Tidak | `1` | $\ge 1$ | Nomor halaman yang diminta (dimulai dari 1) |
+  | `page_size` | `integer` | Tidak | `20` | 1 - 100 | Jumlah item per halaman |
+  | `kategori` | `string` | Tidak | `null` | - | Filter parsial berdasarkan nama kategori pekerjaan |
+  | `divisi` | `string` | Tidak | `null` | - | Filter parsial berdasarkan nama divisi |
+
+- **Contoh Request**:
+  ```bash
+  curl -X GET "http://127.0.0.1:8000/ahsp-items?page=1&page_size=2"
+  ```
+
+- **Contoh Response** (`200 OK`):
+  ```json
+  {
+    "total": 2596,
+    "page": 1,
+    "page_size": 2,
+    "total_pages": 1298,
+    "items": [
+      {
+        "id": "1.1.1.1",
+        "uraian": "Pembuatan 1 m’ Pagar Sementara dari Kayu Tinggi 2 meter",
+        "satuan": "m'",
+        "divisi": "PERSIAPAN LAPANGAN/SITE WORK",
+        "kategori": "PEKERJAAN PERSIAPAN",
+        "subkategori": "Pembuatan pagar proyek",
+        "tipe": "standar",
+        "sumber": "SE Dirjen Bina Konstruksi 182/SE/Dk/2025 Lampiran VI (AHSP Bidang Cipta Karya)",
+        "ref_permen": "Lihat Permen PUPR Nomor 8 Tahun 2023 Lampiran B U.1.1.1 (c)",
+        "jumlah_komponen": 13
+      },
+      {
+        "id": "1.1.1.2",
+        "uraian": "Pembuatan 1 m’ Pagar Sementara dari Seng Gelombang Rangka Kayu Tinggi 2 meter",
+        "satuan": "m'",
+        "divisi": "PERSIAPAN LAPANGAN/SITE WORK",
+        "kategori": "PEKERJAAN PERSIAPAN",
+        "subkategori": "Pembuatan pagar proyek",
+        "tipe": "standar",
+        "sumber": "SE Dirjen Bina Konstruksi 182/SE/Dk/2025 Lampiran VI (AHSP Bidang Cipta Karya)",
+        "ref_permen": "Lihat Permen PUPR Nomor 8 Tahun 2023 Lampiran B U.1.1.2 (c)",
+        "jumlah_komponen": 12
+      }
+    ]
+  }
+  ```
+
+---
+
+### 3. Cari Item AHSP (`GET /search`)
 Mencari item pekerjaan AHSP berdasarkan kalimat atau kata kunci bebas.
 
 - **Parameter Query**:
@@ -193,7 +249,7 @@ Mencari item pekerjaan AHSP berdasarkan kalimat atau kata kunci bebas.
 
 ---
 
-### 3. Detail Item & Komponen (`GET /items/{item_id}`)
+### 4. Detail Item & Komponen (`GET /items/{item_id}`)
 Mengambil informasi lengkap satu item AHSP beserta uraian koefisien komponen tenaga kerja, bahan baku, dan peralatan.
 
 - **Parameter Path**:
@@ -225,26 +281,38 @@ Mengambil informasi lengkap satu item AHSP beserta uraian koefisien komponen ten
         "kode_komponen": "L.01",
         "nama_komponen": "Pekerja",
         "satuan": "OH",
-        "koefisien": 0.3,
-        "perlu_cek": false
+        "koefisien": 0.2,
+        "perlu_cek": false,
+        "nama_shs_cocok": "Pekerja",
+        "harga_satuan": 100000.0,
+        "jumlah_harga": 20000.0,
+        "status_pencocokan": "Match by Kode"
       },
       {
         "urutan": 2,
         "jenis": "tenaga_kerja",
         "kode_komponen": "L.02",
-        "nama_komponen": "Tukang batu",
+        "nama_komponen": "Tukang",
         "satuan": "OH",
-        "koefisien": 0.15,
-        "perlu_cek": false
+        "koefisien": 0.1,
+        "perlu_cek": false,
+        "nama_shs_cocok": "Tukang batu",
+        "harga_satuan": 145000.0,
+        "jumlah_harga": 14500.0,
+        "status_pencocokan": "Match by Kode"
       },
       {
         "urutan": 5,
         "jenis": "bahan",
         "kode_komponen": "M.04",
-        "nama_komponen": "Semen Portland (PC)",
+        "nama_komponen": "Semen Portland",
         "satuan": "kg",
         "koefisien": 7.776,
-        "perlu_cek": false
+        "perlu_cek": false,
+        "nama_shs_cocok": "Semen portland",
+        "harga_satuan": 1300.0,
+        "jumlah_harga": 10108.8,
+        "status_pencocokan": "Fuzzy Match"
       },
       {
         "urutan": 6,
@@ -253,7 +321,11 @@ Mengambil informasi lengkap satu item AHSP beserta uraian koefisien komponen ten
         "nama_komponen": "Pasir Pasang",
         "satuan": "m3",
         "koefisien": 0.023,
-        "perlu_cek": false
+        "perlu_cek": false,
+        "nama_shs_cocok": "Pasir pasang",
+        "harga_satuan": 200000.0,
+        "jumlah_harga": 4600.0,
+        "status_pencocokan": "Match by Name & Unit"
       }
     ]
   }
